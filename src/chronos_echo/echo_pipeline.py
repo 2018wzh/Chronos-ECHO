@@ -120,6 +120,8 @@ class Chronos2EchoPipeline(Chronos2Pipeline):
         image_size: int | None = None,
         echo_config: Chronos2EchoConfig | None = None,
         tokenizer=None,
+        text_column: str = "fact",
+        missing_text: str = "error",
     ) -> tuple[TimeMMDWindowDataset, TimeMMDBatchDataset]:
         echo_config = echo_config or self.model.echo_config
         if tokenizer is None:
@@ -136,6 +138,8 @@ class Chronos2EchoPipeline(Chronos2Pipeline):
             features=features,
             tokenizer=tokenizer,
             max_text_length=echo_config.max_text_length,
+            text_column=text_column,
+            missing_text=missing_text,
             image_column=image_column,
             image_root_path=image_root_path,
             image_size=image_size or echo_config.vision_image_size,
@@ -413,6 +417,8 @@ class Chronos2EchoPipeline(Chronos2Pipeline):
         image_size: int | None = None,
         tokenizer=None,
         return_base: bool = False,
+        text_column: str = "fact",
+        missing_text: str = "error",
     ) -> dict[str, torch.Tensor | list[float]]:
         if tokenizer is None:
             tokenizer = create_timemmd_tokenizer(
@@ -434,6 +440,8 @@ class Chronos2EchoPipeline(Chronos2Pipeline):
             image_size=image_size,
             echo_config=self.model.echo_config,
             tokenizer=tokenizer,
+            text_column=text_column,
+            missing_text=missing_text,
         )
         loader = DataLoader(dataset, batch_size=None, pin_memory=self.model.device.type == "cuda")
 

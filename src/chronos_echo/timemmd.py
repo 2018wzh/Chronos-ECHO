@@ -25,7 +25,7 @@ def create_timemmd_tokenizer(
 
 
 class TimeMMDWindowDataset(Dataset):
-    required_columns = {"date", "fact", "prior_history_avg", "start_date", "end_date"}
+    required_columns = {"date", "prior_history_avg", "start_date", "end_date"}
 
     def __init__(
         self,
@@ -39,6 +39,8 @@ class TimeMMDWindowDataset(Dataset):
         features: str = "S",
         tokenizer: Any | None = None,
         max_text_length: int = 500,
+        text_column: str = "fact",
+        missing_text: str = "error",
         image_column: str | None = None,
         image_root_path: str | Path | None = None,
         image_size: int = 64,
@@ -62,6 +64,8 @@ class TimeMMDWindowDataset(Dataset):
         self.features = features
         self.tokenizer = tokenizer
         self.max_text_length = max_text_length
+        self.text_column = text_column
+        self.missing_text = missing_text
         self.image_column = image_column
         if image_root_path is None:
             self.image_root_path = self.root_path
@@ -90,16 +94,18 @@ class TimeMMDWindowDataset(Dataset):
             raise ValueError(f"TimeMMD CSV is missing required columns: {sorted(missing)}")
         if self.target not in df.columns:
             raise ValueError(f"Target column {self.target!r} not found in TimeMMD CSV")
+        if self.text_column not in df.columns:
+            raise ValueError(f"Text column {self.text_column!r} not found in TimeMMD CSV")
         # Only use images when explicitly requested — never auto-detect.
         # Auto-detection triggers image-loading warnings/costs for modes
         # that don't need images (zero_shot, text_only).
         if self.image_column is not None and self.image_column not in df.columns:
             raise ValueError(f"Image column {self.image_column!r} not found in TimeMMD CSV")
 
-        metadata_columns = self.required_columns | {"date"}
+        metadata_columns = self.required_columns | {"date", self.text_column}
         if self.image_column is not None:
             metadata_columns.add(self.image_column)
-        candidate_columns = [col for col in df.columns if col not in metadata_columns and col != "fact"]
+        candidate_columns = [col for col in df.columns if col not in metadata_columns]
         numeric_columns = []
         for col in candidate_columns:
             series = pd.to_numeric(df[col], errors="coerce")
@@ -122,9 +128,16 @@ class TimeMMDWindowDataset(Dataset):
         value_columns = self.target_columns + self.covariate_columns
         values = df[value_columns].to_numpy(dtype=np.float32)
         prior = pd.to_numeric(df["prior_history_avg"], errors="coerce").fillna(0.0).to_numpy(dtype=np.float32)
-        if df["fact"].isna().any() or df["fact"].astype(str).str.strip().eq("").any():
-            raise ValueError("TimeMMD CSV contains missing or empty fact values; text must be provided explicitly")
-        text = df["fact"].astype(str).to_numpy()
+        text_series = df[self.text_column]
+        missing_text = text_series.isna() | text_series.astype(str).str.strip().eq("")
+        if missing_text.any():
+            if self.missing_text == "error":
+                raise ValueError(
+                    f"TimeMMD CSV contains missing or empty {self.text_column} values; text must be provided explicitly"
+                )
+            text_series = text_series.fillna(self.missing_text).astype(str)
+            text_series = text_series.mask(text_series.str.strip().eq(""), self.missing_text)
+        text = text_series.astype(str).to_numpy()
         image_paths = (
             df[self.image_column].fillna("").astype(str).to_numpy() if self.image_column is not None else None
         )

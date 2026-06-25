@@ -54,6 +54,19 @@ ECHO fine-tuning:
 from chronos_echo.timemmd import TimeMMDWindowDataset, build_timemmd_batch
 ```
 
+## TimeMMD Evaluation
+
+Evaluate Chronos-2-ECHO against a local Aurora checkpoint with the Aurora
+TimeMMD domain/horizon matrix:
+
+```sh
+python scripts/evaluate_timemmd.py --checkpoint path/to/chronos-echo --aurora-root ../Aurora --aurora-model ../Aurora/aurora --data-root path/to/TimeMMD/dataset --output-dir results/timemmd
+```
+
+The script does not download data or install packages. It writes `metrics.csv`,
+`comparison.csv`, `summary.json`, and `repro.txt` so the run can be reproduced.
+Use `--manifest` to override the built-in Aurora matrix.
+
 ## Citation
 
 If you use the base Chronos-2 model, please cite the Chronos-2 report:

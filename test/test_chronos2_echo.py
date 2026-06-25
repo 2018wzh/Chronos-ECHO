@@ -1,4 +1,5 @@
 import json
+import importlib.util
 from pathlib import Path
 
 import numpy as np
@@ -144,6 +145,65 @@ def test_timemmd_dataset_requires_real_text(tmp_path):
             tokenizer=TestTokenizer(),
             max_text_length=16,
         )
+
+
+def test_timemmd_dataset_accepts_custom_text_column(tmp_path):
+    csv_path = tmp_path / "TinySearch.csv"
+    _write_timemmd_csv(csv_path)
+    frame = pd.read_csv(csv_path).drop(columns=["fact"])
+    frame["Final_Search_3"] = [f"search text {idx}" for idx in range(len(frame))]
+    frame.to_csv(csv_path, index=False)
+
+    dataset = TimeMMDWindowDataset(
+        root_path=tmp_path,
+        data_path=csv_path.name,
+        flag="train",
+        seq_len=12,
+        pred_len=4,
+        target="OT",
+        features="S",
+        tokenizer=TestTokenizer(),
+        text_column="Final_Search_3",
+        max_text_length=16,
+    )
+
+    assert dataset[0]["text_input_ids"].shape == (16,)
+
+    with pytest.raises(ValueError, match="Text column 'fact' not found"):
+        TimeMMDWindowDataset(
+            root_path=tmp_path,
+            data_path=csv_path.name,
+            flag="train",
+            seq_len=12,
+            pred_len=4,
+            target="OT",
+            features="S",
+            tokenizer=TestTokenizer(),
+            max_text_length=16,
+        )
+
+
+def test_timemmd_dataset_replaces_missing_text_when_configured(tmp_path):
+    csv_path = tmp_path / "TinyMissingTextFallback.csv"
+    _write_timemmd_csv(csv_path)
+    frame = pd.read_csv(csv_path)
+    frame.loc[0, "fact"] = np.nan
+    frame.to_csv(csv_path, index=False)
+
+    dataset = TimeMMDWindowDataset(
+        root_path=tmp_path,
+        data_path=csv_path.name,
+        flag="train",
+        seq_len=12,
+        pred_len=4,
+        target="OT",
+        features="S",
+        tokenizer=TestTokenizer(),
+        max_text_length=16,
+        missing_text="No information available",
+    )
+
+    assert dataset[0]["text_input_ids"].shape == (16,)
 
 
 def test_timemmd_dataset_loads_real_image_paths(tmp_path):
@@ -357,3 +417,80 @@ def test_fit_timemmd_trains_only_lora_and_echo_params(tmp_path, echo_pipeline):
     trainable = [name for name, param in ft_pipeline.model.named_parameters() if param.requires_grad]
     assert trainable
     assert all(("lora_" in name or ".echo." in f".{name}." or "modules_to_save" in name) for name in trainable)
+
+
+def test_evaluate_timemmd_script_writes_reproducible_outputs(tmp_path, monkeypatch):
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "evaluate_timemmd.py"
+    spec = importlib.util.spec_from_file_location("evaluate_timemmd", script_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+
+    csv_path = tmp_path / "Tiny.csv"
+    _write_timemmd_csv(csv_path)
+    manifest_path = tmp_path / "manifest.csv"
+    pd.DataFrame(
+        [
+            {
+                "domain": "Tiny",
+                "data_path": csv_path.name,
+                "seq_len": 12,
+                "pred_len": 4,
+                "features": "S",
+                "target": "OT",
+                "text_column": "fact",
+                "split": "test",
+            }
+        ]
+    ).to_csv(manifest_path, index=False)
+
+    def fake_evaluator(*, model_name, tasks, **kwargs):
+        del kwargs
+        return [
+            {
+                "model": model_name,
+                "domain": task["domain"],
+                "pred_len": task["pred_len"],
+                "seq_len": task["seq_len"],
+                "mse": 1.0 if model_name == "chronos2_echo" else 1.5,
+                "mae": 0.5 if model_name == "chronos2_echo" else 0.75,
+                "rmse": 1.0,
+                "mape": 0.0,
+                "mspe": 0.0,
+                "rse": 0.0,
+                "corr": 0.0,
+                "n_windows": 1,
+            }
+            for task in tasks
+        ]
+
+    monkeypatch.setattr(module, "evaluate_chronos", fake_evaluator)
+    monkeypatch.setattr(module, "evaluate_aurora", fake_evaluator)
+
+    out_dir = tmp_path / "out"
+    exit_code = module.main(
+        [
+            "--checkpoint",
+            str(DUMMY_MODEL_PATH),
+            "--aurora-model",
+            str(tmp_path / "aurora"),
+            "--aurora-root",
+            str(tmp_path),
+            "--data-root",
+            str(tmp_path),
+            "--output-dir",
+            str(out_dir),
+            "--manifest",
+            str(manifest_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert (out_dir / "metrics.csv").exists()
+    assert (out_dir / "comparison.csv").exists()
+    assert (out_dir / "summary.json").exists()
+    assert (out_dir / "repro.txt").exists()
+    comparison = pd.read_csv(out_dir / "comparison.csv")
+    assert comparison.loc[0, "chronos2_echo_mse"] == 1.0
+    assert comparison.loc[0, "aurora_mse"] == 1.5
+    assert "--assert-sota" not in module.build_parser().format_help()
