@@ -1,4 +1,4 @@
-# Chronos-2-ECHO: Event-guided Calibration with Heterogeneous Observations for Chronos-2**
+# Chronos-2-ECHO: Event-guided Calibration with Heterogeneous Observations for Chronos-2
 
 Chronos-2-ECHO adds an Aurora-inspired Event-Guided Echo Adapter on top of
 [Chronos-2](https://huggingface.co/amazon/chronos-2) for multimodal financial
