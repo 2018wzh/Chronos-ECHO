@@ -327,6 +327,71 @@ def test_chronos2_zero_shot_passes_three_dimensional_context(tmp_path, monkeypat
     assert all(shape[1:] == (1, 12) for shape in shapes)
 
 
+def test_echo_zero_shot_does_not_pass_timemmd_prior_as_risk_feature(monkeypatch):
+    import run_benchmark
+
+    captured_inputs = {}
+
+    class FakeEchoConfig:
+        max_text_length = 16
+
+    class FakeEchoModel:
+        device = torch.device("cpu")
+        echo_config = FakeEchoConfig()
+
+        def eval(self):
+            return None
+
+        def __call__(self, **kwargs):
+            captured_inputs.update(kwargs)
+            return SimpleNamespace(quantile_preds=torch.zeros((1, 1, 4)))
+
+    class FakePipeline:
+        model = FakeEchoModel()
+        model_output_patch_size = 16
+        quantiles = [0.5]
+
+        def _unwrap_echo_model(self, model):
+            return model
+
+    batch = {
+        "context": torch.zeros((1, 12)),
+        "future_target": torch.zeros((1, 4)),
+        "future_covariates": torch.full((1, 4), float("nan")),
+        "group_ids": torch.zeros((1,), dtype=torch.long),
+        "num_output_patches": 1,
+        "target_idx_ranges": [(0, 1)],
+        "text_input_ids": torch.ones((1, 16), dtype=torch.long),
+        "text_attention_mask": torch.ones((1, 16), dtype=torch.long),
+        "text_token_type_ids": torch.zeros((1, 16), dtype=torch.long),
+        "risk_features": torch.ones((1, 4, 1)),
+    }
+    task = {
+        "domain": "Agriculture",
+        "data_path": "Agriculture.csv",
+        "seq_len": 12,
+        "pred_len": 4,
+        "features": "S",
+        "target": "OT",
+        "text_column": "fact",
+        "split": "test",
+        "batch_size": 1,
+    }
+
+    monkeypatch.setattr(run_benchmark, "_echo_timemmd_dataset", lambda *args, **kwargs: (None, [batch]))
+    monkeypatch.setattr(run_benchmark, "DataLoader", lambda dataset, **kwargs: iter(dataset))
+
+    rows = run_benchmark._evaluate_echo_pipeline(
+        "chronos2_echo_zero_shot",
+        [task],
+        data_root=Path("."),
+        pipeline_for_task=lambda _: FakePipeline(),
+    )
+
+    assert rows[0]["n_windows"] == 1
+    assert "risk_features" not in captured_inputs
+
+
 def test_fewshot_split_validation_catches_untrainable_aurora_tasks(tmp_path):
     from run_benchmark import validate_fewshot_splits
 

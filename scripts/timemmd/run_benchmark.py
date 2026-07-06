@@ -321,7 +321,7 @@ def _evaluate_echo_pipeline(
                 future_target = batch["future_target"]
                 model_inputs = {}
                 for key, value in batch.items():
-                    if key == "future_target":
+                    if key in {"future_target", "risk_features"}:
                         continue
                     model_inputs[key] = value.to(device) if torch.is_tensor(value) else value
                 output = pipeline.model(**model_inputs)
