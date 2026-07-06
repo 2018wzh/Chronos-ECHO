@@ -125,8 +125,21 @@ class Chronos2EchoPipeline(Chronos2Pipeline):
         if not hasattr(config, "chronos_config"):
             raise ValueError("Not a Chronos config file")
 
-        reset_new_echo = echo_config is not None or not hasattr(config, "echo_config")
-        if echo_config is not None or not hasattr(config, "echo_config"):
+        if not hasattr(config, "echo_config"):
+            if device_map is not None and (not isinstance(device_map, str) or device_map == "auto"):
+                raise ValueError("Chronos2EchoPipeline.from_pretrained supports only string devices like 'cpu' or 'cuda'.")
+            base_kwargs = dict(kwargs)
+            if device_map is not None:
+                base_kwargs["device_map"] = device_map
+            base_pipeline = Chronos2Pipeline.from_pretrained(pretrained_model_name_or_path, *args, **base_kwargs)
+            model = cls(model=base_pipeline.model)._clone_as_echo_model(echo_config=echo_config)
+            model.reset_echo_residual_head_random()
+            model.load_pretrained_echo_backbones()
+            model.reset_echo_safety_parameters(zero_residual_head=False)
+            return cls(model=model)
+
+        reset_new_echo = echo_config is not None
+        if echo_config is not None:
             config.echo_config = cls._echo_config_to_dict(echo_config)
         config.chronos_pipeline_class = "Chronos2EchoPipeline"
         config.architectures = ["Chronos2EchoModel"]
