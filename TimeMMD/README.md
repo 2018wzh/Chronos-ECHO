@@ -6,7 +6,7 @@ This harness evaluates Chronos-2 and Chronos-2-ECHO using Aurora's TimeMMD proto
 ## Setup
 
 ```sh
-python.exe -m pip install -e ".[timemmd]"
+D:\envs\chronos\python.exe -m pip install -e ".[timemmd]"
 ```
 
 ## Get Data
@@ -16,8 +16,7 @@ official repo links the benchmark datasets here:
 https://drive.google.com/file/d/12tJk858WaoG7ZVSvUq8KU1oHfGNJrARF/view?usp=drive_link
 
 Download and extract it, then point `--data-root` at the extracted TimeMMD
-dataset directory containing the nine CSV files below. In Aurora's own script
-this directory is `/home/Aurora/TimeMMD/dataset`.
+dataset directory containing the nine CSV files below.
 
 ## Data Layout
 
@@ -36,24 +35,34 @@ SocialGood.csv
 ```
 
 Each CSV must contain `date`, `OT`, `prior_history_avg`, `start_date`, `end_date`, and `fact`.
-The default ECHO text tokenizer is read from `--aurora-root\TimeMMD\aurora\bert_config`.
+Missing `fact` values are handled like Aurora's loader: `NaN` becomes `No information available`.
+The default ECHO text tokenizer is bundled at `TimeMMD\aurora\bert_config`.
 Pass `--text-tokenizer` explicitly when using a different tokenizer path.
 
 ## Dry Run
 
 ```sh
-python -m TimeMMD.run_benchmark --data-root D:\path\to\TimeMMD\dataset --dry-run
+D:\envs\chronos\python.exe -m TimeMMD.run_benchmark --data-root D:\path\to\TimeMMD\dataset --dry-run
 ```
 
 ## Full Run
 
 ```sh
-python -m TimeMMD.run_benchmark --data-root D:\path\to\TimeMMD\dataset
+D:\envs\chronos\python.exe -m TimeMMD.run_benchmark --data-root D:\path\to\TimeMMD\dataset
 ```
 
-Outputs are written to `TimeMMD\runs\<run_id>\`. Few-shot ECHO checkpoints are cached under
-`TimeMMD\checkpoints\chronos2_echo_fewshot\` and are retrained only when the task, data hash, or
-training config changes.
+The default run matches Aurora's zero-shot script and evaluates `chronos2,echo_zero_shot`.
+Outputs are written to `TimeMMD\runs\<run_id>\`.
+
+Few-shot ECHO is explicit:
+
+```sh
+D:\envs\chronos\python.exe -m TimeMMD.run_benchmark --data-root D:\path\to\TimeMMD\dataset --models echo_few_shot
+```
+
+The released Aurora TimeMMD data has no 10% few-shot training windows for Energy/Security under
+the Aurora seq_len matrix, so `echo_few_shot` is rejected unless the manifest excludes those tasks.
+Few-shot checkpoints are cached under `TimeMMD\checkpoints\chronos2_echo_fewshot\`.
 
 Aurora reference values are the Aurora columns from Table 12 of
 https://arxiv.org/html/2509.22295v4.

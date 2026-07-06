@@ -20,7 +20,14 @@ class TestTokenizer:
         }
 
 
-def _write_domain_csv(path: Path, n_rows: int = 80, *, blank_text: bool = False, bad_target: bool = False) -> None:
+def _write_domain_csv(
+    path: Path,
+    n_rows: int = 80,
+    *,
+    blank_text: bool = False,
+    missing_text: bool = False,
+    bad_target: bool = False,
+) -> None:
     dates = pd.date_range("2024-01-01", periods=n_rows, freq="D")
     frame = pd.DataFrame(
         {
@@ -33,7 +40,9 @@ def _write_domain_csv(path: Path, n_rows: int = 80, *, blank_text: bool = False,
         }
     )
     if blank_text:
-        frame.loc[0, "fact"] = ""
+        frame.loc[0, "fact"] = "   "
+    if missing_text:
+        frame.loc[0, "fact"] = np.nan
     if bad_target:
         frame.loc[0, "OT"] = np.inf
     frame.to_csv(path, index=False)
@@ -89,16 +98,11 @@ def test_aurora_metric_formula_matches_reference_metrics():
     assert row["corr"] == pytest.approx(float(np.asarray(0.01 * (u / d).mean(-1)).mean()))
 
 
-def test_default_tokenizer_requires_aurora_timemmd_bert_config(tmp_path):
-    from TimeMMD.run_benchmark import _default_tokenizer_path
+def test_default_tokenizer_uses_bundled_aurora_timemmd_bert_config():
+    from TimeMMD.run_benchmark import DEFAULT_TOKENIZER_PATH, _default_tokenizer_path
 
-    preferred = tmp_path / "TimeMMD" / "aurora" / "bert_config"
-    with pytest.raises(FileNotFoundError, match="Aurora TimeMMD tokenizer config not found"):
-        _default_tokenizer_path(tmp_path)
-
-    preferred.mkdir(parents=True)
-
-    assert _default_tokenizer_path(tmp_path) == str(preferred)
+    assert _default_tokenizer_path() == str(DEFAULT_TOKENIZER_PATH)
+    assert (DEFAULT_TOKENIZER_PATH / "vocab.txt").is_file()
 
 
 def test_validate_data_root_catches_bad_timemmd_inputs(tmp_path):
@@ -125,6 +129,10 @@ def test_validate_data_root_catches_bad_timemmd_inputs(tmp_path):
     with pytest.raises(ValueError, match="empty fact"):
         validate_data_root(tmp_path, [tiny_task])
 
+    _write_domain_csv(tmp_path / "Agriculture.csv", missing_text=True)
+    report = validate_data_root(tmp_path, [tiny_task])
+    assert report["ok"] is True
+
     _write_domain_csv(tmp_path / "Agriculture.csv", n_rows=16)
     with pytest.raises(ValueError, match="no test windows"):
         validate_data_root(tmp_path, [tiny_task])
@@ -134,6 +142,20 @@ def test_timemmd_dataset_and_batch_live_in_timemmd_package(tmp_path):
     from TimeMMD.dataset import TimeMMDBatchDataset, TimeMMDWindowDataset
 
     _write_domain_csv(tmp_path / "Agriculture.csv")
+    _write_domain_csv(tmp_path / "MissingFact.csv", missing_text=True)
+    missing_fact = TimeMMDWindowDataset(
+        root_path=tmp_path,
+        data_path="MissingFact.csv",
+        flag="train",
+        seq_len=12,
+        pred_len=4,
+        target="OT",
+        features="S",
+        tokenizer=TestTokenizer(),
+        max_text_length=16,
+    )
+    assert missing_fact.text[0] == "No information available"
+
     default_ratio = TimeMMDWindowDataset(
         root_path=tmp_path,
         data_path="Agriculture.csv",
@@ -246,6 +268,24 @@ def test_run_benchmark_writes_comparable_outputs(tmp_path, monkeypatch):
     assert json.loads((run_dir / "input_validation.json").read_text(encoding="utf-8"))["ok"] is True
     comparison = pd.read_csv(run_dir / "comparison.csv")
     assert set(comparison["reference_model"]) == {"aurora_zero_shot", "aurora_few_shot"}
+
+
+def test_fewshot_split_validation_catches_untrainable_aurora_tasks(tmp_path):
+    from TimeMMD.run_benchmark import validate_fewshot_splits
+
+    _write_domain_csv(tmp_path / "Energy.csv", n_rows=100)
+    task = {
+        "domain": "Energy",
+        "data_path": "Energy.csv",
+        "seq_len": 68,
+        "pred_len": 4,
+        "features": "S",
+        "target": "OT",
+        "text_column": "fact",
+    }
+
+    with pytest.raises(ValueError, match="fewshot=0"):
+        validate_fewshot_splits(tmp_path, [task])
 
 
 def test_train_echo_fewshot_uses_project2_training_defaults(tmp_path, monkeypatch):

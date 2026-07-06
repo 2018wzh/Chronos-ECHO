@@ -8,6 +8,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, IterableDataset
 
+AURORA_MISSING_TEXT = "No information available"
+
 
 def create_timemmd_tokenizer(tokenizer_name_or_path: str | None) -> Any:
     if tokenizer_name_or_path is None:
@@ -108,13 +110,12 @@ class TimeMMDWindowDataset(Dataset):
         value_columns = self.target_columns + self.covariate_columns
         values = df[value_columns].to_numpy(dtype=np.float32)
         prior = pd.to_numeric(df["prior_history_avg"], errors="coerce").fillna(0.0).to_numpy(dtype=np.float32)
-        text_series = df[self.text_column]
-        missing_text = text_series.isna() | text_series.astype(str).str.strip().eq("")
-        if missing_text.any():
+        text_series = df[self.text_column].fillna(AURORA_MISSING_TEXT).astype(str)
+        if text_series.str.strip().eq("").any():
             raise ValueError(
-                f"TimeMMD CSV contains missing or empty {self.text_column} values; text must be provided explicitly"
+                f"TimeMMD CSV contains empty {self.text_column} values; text must be provided explicitly"
             )
-        text = text_series.astype(str).to_numpy()
+        text = text_series.to_numpy()
         image_paths = df[self.image_column].fillna("").astype(str).to_numpy() if self.image_column else None
 
         num_train = int(len(df) * 0.7)
@@ -122,7 +123,6 @@ class TimeMMDWindowDataset(Dataset):
         num_val = len(df) - num_train - num_test
         border1s = [0, num_train - self.seq_len, len(df) - num_test - self.seq_len]
         border2s = [num_train, num_train + num_val, len(df)]
-        border1s = [max(0, border) for border in border1s]
 
         if self.flag == "train":
             border1, border2 = border1s[0], border2s[0]
@@ -131,7 +131,7 @@ class TimeMMDWindowDataset(Dataset):
         elif self.flag == "test":
             border1, border2 = border1s[2], border2s[2]
         else:
-            border1 = max(0, int((1 - self.few_shot_ratio) * num_train) - self.seq_len)
+            border1 = int((1 - self.few_shot_ratio) * num_train) - self.seq_len
             border2 = num_train
 
         train_values = values[border1s[0] : border2s[0]]

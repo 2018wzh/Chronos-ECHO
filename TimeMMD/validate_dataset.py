@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 REQUIRED_COLUMNS = {"date", "OT", "prior_history_avg", "start_date", "end_date", "fact"}
+AURORA_MISSING_TEXT = "No information available"
 
 
 def _test_window_count(n_rows: int, seq_len: int, pred_len: int) -> int:
@@ -39,9 +40,9 @@ def validate_data_root(data_root: str | Path, tasks: list[dict[str, Any]]) -> di
         if not np.isfinite(target.to_numpy(dtype=float)).all():
             raise ValueError(f"{path.name} has non-finite values in OT")
 
-        fact = df["fact"]
-        if fact.isna().any() or fact.astype(str).str.strip().eq("").any():
-            raise ValueError(f"{path.name} contains missing or empty fact text")
+        fact = df["fact"].fillna(AURORA_MISSING_TEXT).astype(str)
+        if fact.str.strip().eq("").any():
+            raise ValueError(f"{path.name} contains empty fact text")
 
         n_windows = _test_window_count(len(df), int(task["seq_len"]), int(task["pred_len"]))
         if n_windows == 0:

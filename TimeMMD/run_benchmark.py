@@ -27,6 +27,7 @@ from .validate_dataset import validate_data_root
 ROOT = Path(__file__).resolve().parent
 DEFAULT_MANIFEST = ROOT / "manifest.csv"
 DEFAULT_CHECKPOINT_ROOT = ROOT / "checkpoints" / "chronos2_echo_fewshot"
+DEFAULT_TOKENIZER_PATH = ROOT / "aurora" / "bert_config"
 
 PROJECT2_ECHO_CONFIG: dict[str, Any] = {
     "vision_model_name_or_path": "google/vit-base-patch16-224",
@@ -187,6 +188,30 @@ def _echo_timemmd_dataset(
     )
 
 
+def validate_fewshot_splits(data_root: Path, tasks: list[dict[str, Any]]) -> None:
+    bad = []
+    for task in tasks:
+        counts = {}
+        for flag in ["fewshot", "val"]:
+            counts[flag] = len(
+                TimeMMDWindowDataset(
+                    root_path=data_root,
+                    data_path=task["data_path"],
+                    flag=flag,
+                    seq_len=task["seq_len"],
+                    pred_len=task["pred_len"],
+                    target=task["target"],
+                    features=task["features"],
+                    tokenizer=NoopTokenizer(),
+                    text_column=task["text_column"],
+                )
+            )
+        if counts["fewshot"] == 0 or counts["val"] == 0:
+            bad.append(f"{task['domain']} pred_len={task['pred_len']} fewshot={counts['fewshot']} val={counts['val']}")
+    if bad:
+        raise ValueError("Aurora 10% few-shot split has no training/eval windows for: " + "; ".join(bad))
+
+
 def evaluate_chronos2(
     model_name: str,
     tasks: list[dict[str, Any]],
@@ -223,21 +248,20 @@ def evaluate_chronos2(
     return rows
 
 
-def _default_tokenizer_path(aurora_root: Path) -> str:
-    local = aurora_root / "TimeMMD" / "aurora" / "bert_config"
-    if not local.exists():
+def _default_tokenizer_path() -> str:
+    if not DEFAULT_TOKENIZER_PATH.exists():
         raise FileNotFoundError(
-            f"Aurora TimeMMD tokenizer config not found at {local}. "
-            "Pass --aurora-root pointing to ../Aurora or set --text-tokenizer explicitly."
+            f"Aurora TimeMMD tokenizer config not found at {DEFAULT_TOKENIZER_PATH}. "
+            "Set --text-tokenizer explicitly."
         )
-    return str(local)
+    return str(DEFAULT_TOKENIZER_PATH)
 
 
 def resolve_echo_config(args: argparse.Namespace) -> dict[str, Any]:
     config = dict(PROJECT2_ECHO_CONFIG)
     if args.echo_config:
         config.update(json.loads(args.echo_config))
-    config.setdefault("text_tokenizer_name_or_path", args.text_tokenizer or _default_tokenizer_path(Path(args.aurora_root)))
+    config.setdefault("text_tokenizer_name_or_path", args.text_tokenizer or _default_tokenizer_path())
     return config
 
 
@@ -597,11 +621,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--data-root", required=True, help="Directory containing Aurora-compatible TimeMMD CSV files.")
     parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST), help="Task manifest CSV.")
     parser.add_argument("--output-dir", default=None, help="Output directory. Defaults to TimeMMD/runs/<timestamp>.")
-    parser.add_argument("--models", default="chronos2,echo_zero_shot,echo_few_shot")
+    parser.add_argument("--models", default="chronos2,echo_zero_shot")
     parser.add_argument("--chronos-model", default="amazon/chronos-2")
     parser.add_argument("--echo-base-model", default="amazon/chronos-2")
     parser.add_argument("--echo-config", default=None, help="JSON overrides merged into the Project_2 ECHO config.")
-    parser.add_argument("--aurora-root", default=str((ROOT.parent / ".." / "Aurora").resolve()))
     parser.add_argument("--text-tokenizer", default=None)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--seed", type=int, default=2021)
@@ -624,6 +647,8 @@ def main(argv: list[str] | None = None) -> int:
     validation = validate_data_root(data_root, tasks)
     selected = {item.strip() for item in args.models.split(",") if item.strip()}
     echo_config = resolve_echo_config(args)
+    if "echo_few_shot" in selected:
+        validate_fewshot_splits(data_root, tasks)
 
     if args.dry_run:
         print(f"Validated {len(tasks)} tasks from {args.manifest}")

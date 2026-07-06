@@ -32,6 +32,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/chronos_echo", "TimeMMD"]
+artifacts = [
+  "TimeMMD/manifest.csv",
+  "TimeMMD/README.md",
+  "TimeMMD/aurora/bert_config/*",
+]
 
 [tool.hatch.version]
 path = "src/chronos_echo/__about__.py"
