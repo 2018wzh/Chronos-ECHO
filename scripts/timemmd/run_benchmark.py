@@ -19,9 +19,9 @@ import torch
 from torch.utils.data import DataLoader
 
 from chronos_echo import Chronos2EchoConfig, Chronos2EchoPipeline
-from .aurora_reference import SOURCE_URL, get_reference
-from .dataset import TimeMMDBatchDataset, TimeMMDWindowDataset, create_timemmd_tokenizer
-from .validate_dataset import validate_data_root
+from aurora_reference import SOURCE_URL, get_reference
+from dataset import TimeMMDBatchDataset, TimeMMDWindowDataset, create_timemmd_tokenizer
+from validate_dataset import validate_data_root
 
 
 ROOT = Path(__file__).resolve().parent
@@ -621,7 +621,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Aurora-standard TimeMMD benchmark for Chronos-2 and Chronos-2-ECHO.")
     parser.add_argument("--data-root", required=True, help="Directory containing Aurora-compatible TimeMMD CSV files.")
     parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST), help="Task manifest CSV.")
-    parser.add_argument("--output-dir", default=None, help="Output directory. Defaults to TimeMMD/runs/<timestamp>.")
+    parser.add_argument("--output-dir", default=None, help="Output directory. Defaults to scripts/timemmd/runs/<timestamp>.")
     parser.add_argument("--models", default="chronos2,echo_zero_shot")
     parser.add_argument("--chronos-model", default="amazon/chronos-2")
     parser.add_argument("--echo-base-model", default="amazon/chronos-2")

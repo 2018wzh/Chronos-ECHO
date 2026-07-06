@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -6,6 +7,21 @@ import numpy as np
 import pandas as pd
 import pytest
 import torch
+
+
+BENCHMARK_DIR = Path(__file__).resolve().parents[1] / "scripts" / "timemmd"
+sys.path.insert(0, str(BENCHMARK_DIR))
+
+
+def test_timemmd_benchmark_is_not_packaged_as_import_package():
+    import tomllib
+
+    config = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    wheel = config["tool"]["hatch"]["build"]["targets"]["wheel"]
+    assert not (BENCHMARK_DIR / "__init__.py").exists()
+    assert "TimeMMD" not in wheel.get("packages", [])
+    assert "scripts/timemmd" not in wheel.get("packages", [])
+    assert "artifacts" not in wheel
 
 
 class TestTokenizer:
@@ -49,7 +65,7 @@ def _write_domain_csv(
 
 
 def test_timemmd_manifest_matches_aurora_protocol():
-    from TimeMMD.run_benchmark import load_manifest
+    from run_benchmark import load_manifest
 
     tasks = load_manifest()
     assert len(tasks) == 36
@@ -79,7 +95,7 @@ def test_timemmd_manifest_matches_aurora_protocol():
 
 
 def test_aurora_metric_formula_matches_reference_metrics():
-    from TimeMMD.run_benchmark import aurora_metric_row
+    from run_benchmark import aurora_metric_row
 
     pred = np.array([[[1.0], [2.0]], [[2.0], [4.0]]])
     true = np.array([[[1.5], [1.0]], [[3.0], [3.0]]])
@@ -99,15 +115,15 @@ def test_aurora_metric_formula_matches_reference_metrics():
 
 
 def test_default_tokenizer_uses_bundled_aurora_timemmd_bert_config():
-    from TimeMMD.run_benchmark import DEFAULT_TOKENIZER_PATH, _default_tokenizer_path
+    from run_benchmark import DEFAULT_TOKENIZER_PATH, _default_tokenizer_path
 
     assert _default_tokenizer_path() == str(DEFAULT_TOKENIZER_PATH)
     assert (DEFAULT_TOKENIZER_PATH / "vocab.txt").is_file()
 
 
 def test_validate_data_root_catches_bad_timemmd_inputs(tmp_path):
-    from TimeMMD.run_benchmark import load_manifest
-    from TimeMMD.validate_dataset import validate_data_root
+    from run_benchmark import load_manifest
+    from validate_dataset import validate_data_root
 
     manifest = load_manifest()
     tiny_task = dict(manifest[0], seq_len=12, pred_len=4)
@@ -138,8 +154,8 @@ def test_validate_data_root_catches_bad_timemmd_inputs(tmp_path):
         validate_data_root(tmp_path, [tiny_task])
 
 
-def test_timemmd_dataset_and_batch_live_in_timemmd_package(tmp_path):
-    from TimeMMD.dataset import TimeMMDBatchDataset, TimeMMDWindowDataset
+def test_timemmd_dataset_and_batch_live_in_script_tree(tmp_path):
+    from dataset import TimeMMDBatchDataset, TimeMMDWindowDataset
 
     _write_domain_csv(tmp_path / "Agriculture.csv")
     _write_domain_csv(tmp_path / "MissingFact.csv", missing_text=True)
@@ -199,7 +215,7 @@ def test_timemmd_dataset_and_batch_live_in_timemmd_package(tmp_path):
 
 
 def test_run_benchmark_writes_comparable_outputs(tmp_path, monkeypatch):
-    from TimeMMD import run_benchmark
+    import run_benchmark
 
     _write_domain_csv(tmp_path / "Agriculture.csv")
     manifest_path = tmp_path / "manifest.csv"
@@ -272,7 +288,7 @@ def test_run_benchmark_writes_comparable_outputs(tmp_path, monkeypatch):
 
 def test_chronos2_zero_shot_passes_three_dimensional_context(tmp_path, monkeypatch):
     import chronos
-    from TimeMMD.run_benchmark import evaluate_chronos2
+    from run_benchmark import evaluate_chronos2
 
     _write_domain_csv(tmp_path / "Agriculture.csv")
     task = {
@@ -312,7 +328,7 @@ def test_chronos2_zero_shot_passes_three_dimensional_context(tmp_path, monkeypat
 
 
 def test_fewshot_split_validation_catches_untrainable_aurora_tasks(tmp_path):
-    from TimeMMD.run_benchmark import validate_fewshot_splits
+    from run_benchmark import validate_fewshot_splits
 
     _write_domain_csv(tmp_path / "Energy.csv", n_rows=100)
     task = {
@@ -330,7 +346,7 @@ def test_fewshot_split_validation_catches_untrainable_aurora_tasks(tmp_path):
 
 
 def test_train_echo_fewshot_uses_project2_training_defaults(tmp_path, monkeypatch):
-    from TimeMMD import run_benchmark
+    import run_benchmark
 
     _write_domain_csv(tmp_path / "Agriculture.csv")
     task = dict(run_benchmark.load_manifest()[0], seq_len=12, pred_len=6)
