@@ -1,5 +1,4 @@
-# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
 
 import math
 from pathlib import Path
@@ -10,14 +9,9 @@ import torch
 from torch.utils.data import Dataset, IterableDataset
 
 
-def create_timemmd_tokenizer(
-    tokenizer_name_or_path: str | None,
-) -> Any:
+def create_timemmd_tokenizer(tokenizer_name_or_path: str | None) -> Any:
     if tokenizer_name_or_path is None:
-        raise ValueError(
-            "A real tokenizer must be configured for TimeMMD text input. "
-            "Set Chronos2EchoConfig.text_tokenizer_name_or_path or pass an explicit tokenizer."
-        )
+        raise ValueError("Set text_tokenizer_name_or_path or pass an explicit tokenizer for TimeMMD text input.")
 
     from transformers import AutoTokenizer
 
@@ -40,7 +34,6 @@ class TimeMMDWindowDataset(Dataset):
         tokenizer: Any | None = None,
         max_text_length: int = 500,
         text_column: str = "fact",
-        missing_text: str = "error",
         image_column: str | None = None,
         image_root_path: str | Path | None = None,
         image_size: int = 64,
@@ -65,7 +58,6 @@ class TimeMMDWindowDataset(Dataset):
         self.tokenizer = tokenizer
         self.max_text_length = max_text_length
         self.text_column = text_column
-        self.missing_text = missing_text
         self.image_column = image_column
         if image_root_path is None:
             self.image_root_path = self.root_path
@@ -75,15 +67,7 @@ class TimeMMDWindowDataset(Dataset):
         self.image_size = image_size
         self.scale = scale
         self.few_shot_ratio = few_shot_ratio
-
         self._read_data()
-
-    @staticmethod
-    def _detect_image_column(columns: list[str]) -> str | None:
-        for candidate in ["image_path", "img_path", "vision_path", "image", "img", "figure_path"]:
-            if candidate in columns:
-                return candidate
-        return None
 
     def _read_data(self) -> None:
         import pandas as pd
@@ -96,18 +80,14 @@ class TimeMMDWindowDataset(Dataset):
             raise ValueError(f"Target column {self.target!r} not found in TimeMMD CSV")
         if self.text_column not in df.columns:
             raise ValueError(f"Text column {self.text_column!r} not found in TimeMMD CSV")
-        # Only use images when explicitly requested — never auto-detect.
-        # Auto-detection triggers image-loading warnings/costs for modes
-        # that don't need images (zero_shot, text_only).
         if self.image_column is not None and self.image_column not in df.columns:
             raise ValueError(f"Image column {self.image_column!r} not found in TimeMMD CSV")
 
         metadata_columns = self.required_columns | {"date", self.text_column}
         if self.image_column is not None:
             metadata_columns.add(self.image_column)
-        candidate_columns = [col for col in df.columns if col not in metadata_columns]
         numeric_columns = []
-        for col in candidate_columns:
+        for col in [col for col in df.columns if col not in metadata_columns]:
             series = pd.to_numeric(df[col], errors="coerce")
             if series.notna().any():
                 df[col] = series
@@ -131,16 +111,11 @@ class TimeMMDWindowDataset(Dataset):
         text_series = df[self.text_column]
         missing_text = text_series.isna() | text_series.astype(str).str.strip().eq("")
         if missing_text.any():
-            if self.missing_text == "error":
-                raise ValueError(
-                    f"TimeMMD CSV contains missing or empty {self.text_column} values; text must be provided explicitly"
-                )
-            text_series = text_series.fillna(self.missing_text).astype(str)
-            text_series = text_series.mask(text_series.str.strip().eq(""), self.missing_text)
+            raise ValueError(
+                f"TimeMMD CSV contains missing or empty {self.text_column} values; text must be provided explicitly"
+            )
         text = text_series.astype(str).to_numpy()
-        image_paths = (
-            df[self.image_column].fillna("").astype(str).to_numpy() if self.image_column is not None else None
-        )
+        image_paths = df[self.image_column].fillna("").astype(str).to_numpy() if self.image_column else None
 
         num_train = int(len(df) * 0.7)
         num_test = int(len(df) * 0.2)
@@ -191,18 +166,13 @@ class TimeMMDWindowDataset(Dataset):
     def _load_image(self, raw_path: str) -> torch.Tensor:
         raw_path = raw_path.strip()
         if not raw_path:
-            print(f"Warning: Empty image path found for item at index {self.border1}")
-            # Empty path → return a black (zero) image, mirroring Aurora's fallback
-            return torch.zeros(1, self.image_size, self.image_size, dtype=torch.float32)
+            raise ValueError("TimeMMD image path is empty; image input must be provided explicitly")
 
         image_path = Path(raw_path)
         if not image_path.is_absolute():
             image_path = self.image_root_path / image_path
         if not image_path.exists():
-            print(f"Warning: Image not found for item at index {self.border1}")
-            # Missing image → return a black (zero) image, mirroring Aurora's
-            # image_path.exists() guard that sets image_tensor = None
-            return torch.zeros(1, self.image_size, self.image_size, dtype=torch.float32)
+            raise FileNotFoundError(f"TimeMMD image file not found: {image_path}")
 
         from PIL import Image
 
@@ -218,25 +188,18 @@ class TimeMMDWindowDataset(Dataset):
         context = self.values[index : index + self.seq_len].T
         future = self.values[index + self.seq_len : index + self.seq_len + self.pred_len].T
         future_target = future.copy()
-        # IMPORTANT: future_covariates must stay all-NaN.
-        # Copying actual covariate values for the prediction window would leak
-        # target information (e.g. future close price → future daily return).
-        # Only truly exogenous future covariates (calendar, weather forecasts)
-        # should ever be filled — and those require explicit opt-in.
         future_covariates = np.full_like(future, fill_value=np.nan)
         if self.n_targets < self.n_variates:
             future_target[self.n_targets :] = np.nan
 
-        risk = self.prior[index + self.seq_len : index + self.seq_len + self.pred_len].reshape(self.pred_len, 1)
-        text = self.text[index]
         tokenized = self.tokenizer(
-            text,
+            self.text[index],
             padding="max_length",
             truncation=True,
             max_length=self.max_text_length,
             return_tensors="pt",
         )
-
+        risk = self.prior[index + self.seq_len : index + self.seq_len + self.pred_len].reshape(self.pred_len, 1)
         item = {
             "context": torch.tensor(context, dtype=torch.float32),
             "future_target": torch.tensor(future_target, dtype=torch.float32),
@@ -262,7 +225,7 @@ class TimeMMDWindowDataset(Dataset):
         return values * scale + loc
 
 
-def build_timemmd_batch(items: list[dict[str, torch.Tensor | int]], output_patch_size: int):
+def build_timemmd_batch(items: list[dict[str, torch.Tensor | int]], output_patch_size: int) -> dict[str, Any]:
     batch_context = []
     batch_future_target = []
     batch_future_covariates = []
@@ -356,7 +319,9 @@ class TimeMMDBatchDataset(IterableDataset):
                 batch_indices = indices[start : start + self.batch_size]
                 if len(batch_indices) == 0:
                     continue
-                items = [self.window_dataset[int(idx)] for idx in batch_indices]
-                yield build_timemmd_batch(items, self.output_patch_size)
+                yield build_timemmd_batch(
+                    [self.window_dataset[int(idx)] for idx in batch_indices],
+                    self.output_patch_size,
+                )
             if not self.repeat:
                 break
