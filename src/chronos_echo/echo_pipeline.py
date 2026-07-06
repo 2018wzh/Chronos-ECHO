@@ -116,6 +116,7 @@ class Chronos2EchoPipeline(Chronos2Pipeline):
         if str(pretrained_model_name_or_path).startswith("s3://"):
             return BaseChronosPipeline.from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
+        device_map = kwargs.pop("device_map", None)
         torch_dtype = kwargs.get("torch_dtype", "auto")
         if torch_dtype != "auto" and isinstance(torch_dtype, str):
             kwargs["torch_dtype"] = cls.dtypes[torch_dtype]
@@ -132,5 +133,12 @@ class Chronos2EchoPipeline(Chronos2Pipeline):
 
         model = Chronos2EchoModel.from_pretrained(pretrained_model_name_or_path, *args, config=config, **kwargs)
         if reset_new_echo:
-            model.reset_echo_safety_parameters()
+            model.reset_echo_residual_head_random()
+            model.load_pretrained_echo_backbones()
+        if device_map is not None:
+            if not isinstance(device_map, str) or device_map == "auto":
+                raise ValueError("Chronos2EchoPipeline.from_pretrained supports only string devices like 'cpu' or 'cuda'.")
+            model.to(device_map)
+        if reset_new_echo:
+            model.reset_echo_safety_parameters(zero_residual_head=False)
         return cls(model=model)

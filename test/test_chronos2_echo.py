@@ -96,6 +96,18 @@ def test_echo_gate_is_forecast_patch_specific(echo_pipeline):
     assert not torch.allclose(output.echo_gate[..., :16], output.echo_gate[..., 16:])
 
 
+def test_echo_safety_reset_restores_gate_position_scale(echo_pipeline):
+    gate = echo_pipeline.model.echo.event_gate
+    gate.position_scale.data.fill_(float("nan"))
+    echo_pipeline.model.echo.text_encoder.distiller.query_tokens.data.fill_(float("nan"))
+
+    echo_pipeline.model.reset_echo_safety_parameters(zero_residual_head=False)
+
+    assert torch.isfinite(gate.position_scale)
+    assert gate.position_scale.item() == pytest.approx(1e-3)
+    assert torch.isfinite(echo_pipeline.model.echo.text_encoder.distiller.query_tokens).all()
+
+
 def test_echo_requires_real_modality_when_pseudo_image_disabled(echo_pipeline):
     echo_pipeline.model.echo_config.use_pseudo_image = False
     echo_pipeline.model.echo.echo_config.use_pseudo_image = False

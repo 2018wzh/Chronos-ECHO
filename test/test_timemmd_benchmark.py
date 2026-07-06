@@ -270,6 +270,47 @@ def test_run_benchmark_writes_comparable_outputs(tmp_path, monkeypatch):
     assert set(comparison["reference_model"]) == {"aurora_zero_shot", "aurora_few_shot"}
 
 
+def test_chronos2_zero_shot_passes_three_dimensional_context(tmp_path, monkeypatch):
+    import chronos
+    from TimeMMD.run_benchmark import evaluate_chronos2
+
+    _write_domain_csv(tmp_path / "Agriculture.csv")
+    task = {
+        "domain": "Agriculture",
+        "data_path": "Agriculture.csv",
+        "seq_len": 12,
+        "pred_len": 4,
+        "features": "S",
+        "target": "OT",
+        "text_column": "fact",
+        "split": "test",
+        "batch_size": 3,
+    }
+    shapes = []
+
+    class FakeChronos2Pipeline:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            del args, kwargs
+            return cls()
+
+        def predict_quantiles(self, context, *, prediction_length, quantile_levels, limit_prediction_length):
+            del quantile_levels, limit_prediction_length
+            shapes.append(tuple(context.shape))
+            batch_size = context.shape[0]
+            means = [torch.zeros((1, prediction_length)) for _ in range(batch_size)]
+            quantiles = [mean.unsqueeze(-1) for mean in means]
+            return quantiles, means
+
+    monkeypatch.setattr(chronos, "Chronos2Pipeline", FakeChronos2Pipeline)
+
+    rows = evaluate_chronos2("chronos2", [task], data_root=tmp_path, model_path="dummy", device="cpu")
+
+    assert rows[0]["n_windows"] > 0
+    assert shapes
+    assert all(shape[1:] == (1, 12) for shape in shapes)
+
+
 def test_fewshot_split_validation_catches_untrainable_aurora_tasks(tmp_path):
     from TimeMMD.run_benchmark import validate_fewshot_splits
 

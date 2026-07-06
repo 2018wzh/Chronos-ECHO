@@ -31,6 +31,7 @@ DEFAULT_TOKENIZER_PATH = ROOT / "aurora" / "bert_config"
 
 PROJECT2_ECHO_CONFIG: dict[str, Any] = {
     "vision_model_name_or_path": "google/vit-base-patch16-224",
+    "vision_image_size": 224,
     "freeze_vision_backbone": True,
     "reconstruction_loss_weight": 0.5,
     "residual_scale_init": 1.0,
@@ -233,7 +234,7 @@ def evaluate_chronos2(
         bs = batch_size or task["batch_size"]
         for start in range(0, len(dataset), bs):
             items = [dataset[idx] for idx in range(start, min(start + bs, len(dataset)))]
-            context = torch.stack([item["context"].squeeze(0) for item in items])
+            context = torch.stack([item["context"] for item in items])
             quantiles, means = pipeline.predict_quantiles(
                 context,
                 prediction_length=task["pred_len"],
@@ -442,7 +443,7 @@ def fit_echo_timemmd(
         max_steps=num_steps,
         dataloader_num_workers=0,
         tf32=has_sm80 and not use_cpu,
-        bf16=has_sm80 and not use_cpu,
+        bf16=False,
         save_only_model=True,
         prediction_loss_only=True,
         save_total_limit=1,

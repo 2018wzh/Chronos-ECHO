@@ -170,9 +170,9 @@ class EchoVisionEncoder(nn.Module):
         if echo_config.vision_model_name_or_path is not None:
             # Frozen ViT backbone (inspired by Aurora) — extract general-purpose
             # visual features from rendered time series images.
-            from transformers import ViTModel
+            from transformers import AutoConfig, ViTModel
 
-            self.vision_model = ViTModel.from_pretrained(echo_config.vision_model_name_or_path)
+            self.vision_model = ViTModel(AutoConfig.from_pretrained(echo_config.vision_model_name_or_path))
             vit_hidden = self.vision_model.config.hidden_size
             if echo_config.freeze_vision_backbone:
                 for param in self.vision_model.parameters():
@@ -195,6 +195,19 @@ class EchoVisionEncoder(nn.Module):
                 num_heads=num_heads,
                 dropout_rate=dropout_rate,
             )
+
+    def load_pretrained_backbone(self) -> None:
+        if self.echo_config.vision_model_name_or_path is None:
+            return
+
+        from transformers import ViTModel
+
+        target = next(self.vit_projection.parameters())
+        self.vision_model = ViTModel.from_pretrained(self.echo_config.vision_model_name_or_path)
+        if self.echo_config.freeze_vision_backbone:
+            for param in self.vision_model.parameters():
+                param.requires_grad = False
+        self.vision_model.to(device=target.device, dtype=target.dtype)
 
     def _pseudo_image_from_context(self, context: torch.Tensor) -> torch.Tensor:
         x = torch.nan_to_num(context.float(), nan=0.0)
@@ -457,6 +470,9 @@ class Chronos2EchoAdapter(nn.Module):
         self.residual_scale = nn.Parameter(torch.tensor(float(echo_config.residual_scale_init)))
         self.context_reconstructor = ContextReconstructor(self.hidden_size, core_config.chronos_config["input_patch_size"])
 
+    def load_pretrained_backbones(self) -> None:
+        self.vision_encoder.load_pretrained_backbone()
+
     def _maybe_keep_modality(self, tokens: torch.Tensor | None, required: bool = False) -> torch.Tensor | None:
         if tokens is None:
             return None
@@ -558,13 +574,23 @@ class Chronos2EchoModel(Chronos2Model):
         self.config.echo_config = self.echo_config.__dict__
         self.config.architectures = ["Chronos2EchoModel"]
         self.config.chronos_pipeline_class = "Chronos2EchoPipeline"
-        self.reset_echo_safety_parameters()
+        self.reset_echo_safety_parameters(zero_residual_head=True)
 
-    def reset_echo_safety_parameters(self) -> None:
-        nn.init.zeros_(self.echo.residual_head.proj.weight)
-        nn.init.zeros_(self.echo.residual_head.proj.bias)
+    def reset_echo_safety_parameters(self, *, zero_residual_head: bool = True) -> None:
+        if zero_residual_head:
+            nn.init.zeros_(self.echo.residual_head.proj.weight)
+            nn.init.zeros_(self.echo.residual_head.proj.bias)
+        nn.init.normal_(self.echo.text_encoder.distiller.query_tokens, std=0.02)
+        nn.init.normal_(self.echo.vision_encoder.distiller.query_tokens, std=0.02)
+        self.echo.event_gate.position_scale.data.fill_(1e-3)
         self.echo.residual_scale.data.fill_(float(self.echo_config.residual_scale_init))
         nn.init.constant_(self.echo.event_gate.net[2].bias, float(self.echo_config.gate_bias_init))
+
+    def reset_echo_residual_head_random(self) -> None:
+        self.echo.residual_head.proj.reset_parameters()
+
+    def load_pretrained_echo_backbones(self) -> None:
+        self.echo.load_pretrained_backbones()
 
     @staticmethod
     def _duplicate_modality(tensor: torch.Tensor | None, num_copies: int) -> torch.Tensor | None:

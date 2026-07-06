@@ -169,4 +169,5 @@ chronos-2-finetuned
 
 .vscode
 checkpoints
+TimeMMD/runs/
 .reasonix
